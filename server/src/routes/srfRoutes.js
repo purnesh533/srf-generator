@@ -17,6 +17,7 @@ import {
   openBulkOutlookDraft,
   openOutlookDraft,
   parseOfferLetterUpload,
+  parseOfferLetterJson,
   rejectSrf,
   resendSrf,
   saveDraft
@@ -33,7 +34,8 @@ const upload = multer({
 router.use(requireAuth);
 
 router.post("/", createSrf);
-router.post("/parse-offer-letter", upload.single("file"), parseOfferLetterUpload);
+router.post("/parse-offer-letter", parseOfferLetterJson);
+router.post("/parse-offer-letter/multipart", upload.single("file"), parseOfferLetterUpload);
 
 router.get("/mine", listMySrf);
 router.get("/drafts", listDrafts);

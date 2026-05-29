@@ -236,11 +236,26 @@ export default function SrfForm({ loadDraft, onDraftConsumed }) {
     setParseMsg("");
     setParsing(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const { data } = await api.post("/srf/parse-offer-letter", fd, {
-        timeout: 120000
+      const dataBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || "");
+          const comma = result.indexOf(",");
+          resolve(comma >= 0 ? result.slice(comma + 1) : result);
+        };
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsDataURL(file);
       });
+
+      const { data } = await api.post(
+        "/srf/parse-offer-letter",
+        {
+          fileName: file.name,
+          mimeType: file.type,
+          dataBase64
+        },
+        { timeout: 120000 }
+      );
       const fields = data.fields || {};
       const NUMERIC = new Set([
         "salaryFixed",

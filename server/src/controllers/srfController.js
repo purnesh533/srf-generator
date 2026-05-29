@@ -670,35 +670,75 @@ export async function parseOfferLetterUpload(req, res) {
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded (field name: file)" });
     }
-    const text = await extractText(
+    const payload = await buildOfferLetterParseResult(
       req.file.buffer,
       req.file.mimetype,
       req.file.originalname
     );
-    if (!text.trim()) {
-      return res.status(422).json({
-        message:
-          "Could not extract text from the file. If it's a scanned PDF, please retype the offer letter or use a text-based PDF."
-      });
-    }
-    const fields = parseOfferLetter(text);
-    const filled = Object.values(fields).filter((v) => v !== "" && v !== null && v !== undefined).length;
-    console.log("[parse] file:", req.file.originalname, "chars:", text.length, "filled:", filled);
-    console.log("[parse] fields:", JSON.stringify(fields, null, 2));
-    res.json({
-      message: `Extracted ${filled} field(s) from ${req.file.originalname}`,
-      fields,
-      filledCount: filled,
-      fileName: req.file.originalname,
-      textLength: text.length,
-      textPreview: text.slice(0, 4000),
-      rawText: text // for debugging only — remove in production
-    });
+    res.json(payload);
   } catch (error) {
-    res.status(400).json({
+    const status = error?.status || 400;
+    res.status(status).json({
       message: error?.message || "Failed to parse offer letter"
     });
   }
+}
+
+export async function parseOfferLetterJson(req, res) {
+  try {
+    const { fileName, mimeType, dataBase64 } = req.body || {};
+    if (!dataBase64) {
+      return res.status(400).json({ message: "No file data provided (dataBase64)" });
+    }
+
+    const buffer = Buffer.from(String(dataBase64), "base64");
+    if (!buffer.length) {
+      return res.status(400).json({ message: "Invalid file data" });
+    }
+    if (buffer.length > 10 * 1024 * 1024) {
+      return res.status(400).json({ message: "File exceeds 10 MB limit" });
+    }
+
+    const payload = await buildOfferLetterParseResult(
+      buffer,
+      mimeType || "",
+      fileName || "upload"
+    );
+    res.json(payload);
+  } catch (error) {
+    const status = error?.status || 400;
+    res.status(status).json({
+      message: error?.message || "Failed to parse offer letter"
+    });
+  }
+}
+
+async function buildOfferLetterParseResult(buffer, mimeType, fileName) {
+  const text = await extractText(buffer, mimeType, fileName);
+  if (!text.trim()) {
+    const err = new Error(
+      "Could not extract text from the file. If it's a scanned PDF, please retype the offer letter or use a text-based PDF."
+    );
+    err.status = 422;
+    throw err;
+  }
+
+  const fields = parseOfferLetter(text);
+  const filled = Object.values(fields).filter(
+    (v) => v !== "" && v !== null && v !== undefined
+  ).length;
+  console.log("[parse] file:", fileName, "chars:", text.length, "filled:", filled);
+  console.log("[parse] fields:", JSON.stringify(fields, null, 2));
+
+  return {
+    message: `Extracted ${filled} field(s) from ${fileName}`,
+    fields,
+    filledCount: filled,
+    fileName,
+    textLength: text.length,
+    textPreview: text.slice(0, 4000),
+    rawText: text
+  };
 }
 
 export async function downloadMasterExcel(_req, res) {

@@ -20,12 +20,21 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(new Error(`CORS blocked origin: ${origin}`));
+        console.warn(`CORS blocked origin: ${origin}`);
+        callback(null, false);
       }
     }
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "15mb" }));
+
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    message: "SRF API is running. Open the Netlify frontend to use the app.",
+    health: "/api/health"
+  });
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, message: "SRF server running" });

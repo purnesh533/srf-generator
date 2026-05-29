@@ -15,7 +15,12 @@ export default function Login({ onSwitchToSignup, prefill }) {
     try {
       await login(username.trim().toLowerCase(), password);
     } catch (err) {
-      setError(err?.response?.data?.message || "Login failed");
+      const message =
+        err?.response?.data?.message ||
+        (err?.message === "Network Error"
+          ? "Cannot reach the API. Check VITE_API_URL on Netlify and CLIENT_ORIGIN on Render."
+          : "Login failed");
+      setError(message);
     }
   };
 
