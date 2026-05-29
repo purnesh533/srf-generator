@@ -42,16 +42,47 @@ function getChromeCandidates() {
 }
 
 function getLaunchOptions(executablePath) {
-  const options = { headless: "new" };
+  const options = {
+    headless: "new",
+    protocolTimeout: 120000
+  };
   if (executablePath) options.executablePath = executablePath;
   if (process.platform === "linux") {
     options.args = [
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage"
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      "--no-first-run",
+      "--no-zygote"
     ];
   }
   return options;
+}
+
+let sharedBrowserPromise = null;
+
+async function getSharedBrowser() {
+  if (!sharedBrowserPromise) {
+    sharedBrowserPromise = launchBrowser().catch((err) => {
+      sharedBrowserPromise = null;
+      throw err;
+    });
+  }
+  return sharedBrowserPromise;
+}
+
+export async function closeSharedBrowser() {
+  if (!sharedBrowserPromise) return;
+  try {
+    const browser = await sharedBrowserPromise;
+    await browser.close();
+  } catch {
+    // ignore close errors
+  } finally {
+    sharedBrowserPromise = null;
+  }
 }
 
 async function launchBrowser() {
@@ -79,17 +110,23 @@ async function launchBrowser() {
 }
 
 export async function generatePdfBuffer(data) {
-  const browser = await launchBrowser();
+  const browser = await getSharedBrowser();
+  const page = await browser.newPage();
   try {
-    const page = await browser.newPage();
-    await page.setContent(buildSrfHtml(data), { waitUntil: "networkidle0" });
+    page.setDefaultNavigationTimeout(120000);
+    page.setDefaultTimeout(120000);
+    await page.setContent(buildSrfHtml(data), {
+      waitUntil: "domcontentloaded",
+      timeout: 120000
+    });
     const pdf = await page.pdf({
       format: "A4",
       printBackground: true,
-      margin: { top: "22px", right: "22px", bottom: "22px", left: "22px" }
+      margin: { top: "22px", right: "22px", bottom: "22px", left: "22px" },
+      timeout: 120000
     });
     return Buffer.from(pdf);
   } finally {
-    await browser.close();
+    await page.close();
   }
 }

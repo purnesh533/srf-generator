@@ -377,7 +377,6 @@ async function sendSingleApprovalLinkViaSmtp(record, { to, cc, message }) {
     throw err;
   }
 
-  await ensureSrfFiles(record);
   const approvalLink = `${getAppBaseUrl()}/#/approve/${record.id}`;
   const subject = `SRF Approval Request - ${record.candidateName || "Candidate"} (${record.employeeCode || ""})`;
 
@@ -424,10 +423,6 @@ async function sendBulkApprovalLinkViaSmtp(selected, { to, cc, message }) {
     const err = new Error("Approver email is required");
     err.status = 400;
     throw err;
-  }
-
-  for (const record of selected) {
-    await ensureSrfFiles(record);
   }
 
   const summaryLink = `${getAppBaseUrl()}/#/approvals?ids=${selected.map((r) => r.id).join(",")}`;
