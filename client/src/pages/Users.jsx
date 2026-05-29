@@ -251,6 +251,12 @@ export default function Users() {
 
   const sendEmail = async (e, sendNow = false, smtpOverride = null) => {
     e.preventDefault();
+
+    if (sendNow && !smtpOverride) {
+      openSmtpPrompt(e);
+      return;
+    }
+
     setEmailErr("");
     setEmailMsg("");
     setSending(true);
@@ -271,7 +277,7 @@ export default function Users() {
         payload.senderEmail = smtpOverride.email.trim();
         payload.senderPassword = smtpOverride.password;
       }
-      const { data } = await api.post(url, payload);
+      const { data } = await api.post(url, payload, { timeout: 60000 });
       if (data.result === "SENT" || /SENT/.test(data.result || "")) {
         setEmailMsg(
           data.message ||
@@ -289,10 +295,12 @@ export default function Users() {
       }
     } catch (err) {
       const message =
-        err?.response?.data?.message ||
-        err?.response?.data?.error ||
-        err?.message ||
-        "Failed to send email";
+        err?.code === "ECONNABORTED"
+          ? "Request timed out. The mail server may be unreachable from Render (free tier blocks SMTP). Try again or upgrade to Starter."
+          : err?.response?.data?.message ||
+            err?.response?.data?.error ||
+            err?.message ||
+            "Failed to send email";
       if (showSmtpPrompt || smtpOverride) {
         setSmtpErr(message);
       } else {
@@ -305,6 +313,7 @@ export default function Users() {
 
   const openSmtpPrompt = (e) => {
     e.preventDefault();
+    setSending(false);
     setEmailErr("");
     if (!emailForm.to.trim()) {
       setEmailErr("Approver email is required");
@@ -325,6 +334,7 @@ export default function Users() {
   };
 
   const closeEmailModal = () => {
+    setSending(false);
     setEmailFor(null);
     setShowSmtpPrompt(false);
     setSmtpErr("");
@@ -760,7 +770,7 @@ export default function Users() {
                   style={{ width: "auto", background: "var(--accent, #6d28d9)" }}
                   onClick={openSmtpPrompt}
                 >
-                  {sending ? "Sending..." : canUseOutlook ? "Send Now" : "Send Email"}
+                  Send Email
                 </button>
                 <button
                   type="button"
@@ -776,7 +786,15 @@ export default function Users() {
       )}
 
       {showSmtpPrompt && (
-        <div className="modalBackdrop smtpModalBackdrop" onClick={() => setShowSmtpPrompt(false)}>
+        <div
+          className="modalBackdrop smtpModalBackdrop"
+          onClick={() => {
+            setShowSmtpPrompt(false);
+            setSending(false);
+            setSmtpErr("");
+            setSmtpForm((prev) => ({ ...prev, password: "" }));
+          }}
+        >
           <div className="modalCard" onClick={(e) => e.stopPropagation()}>
             <div className="sectionTitle">
               <span className="dot" />
@@ -784,7 +802,11 @@ export default function Users() {
             </div>
             <p className="muted small">
               Enter the email account to send from. Your password is used once for SMTP
-              and is not stored.
+              and is not stored. Use an app password if MFA is enabled.
+            </p>
+            <p className="muted small">
+              If sending fails on Render Free, upgrade the backend to Starter ($7/mo) or
+              set <code>RESEND_API_KEY</code> in Render environment variables.
             </p>
             <form onSubmit={confirmSmtpSend} className="formStack">
               <label className="field">
@@ -822,6 +844,7 @@ export default function Users() {
                   disabled={sending}
                   onClick={() => {
                     setShowSmtpPrompt(false);
+                    setSending(false);
                     setSmtpErr("");
                     setSmtpForm((prev) => ({ ...prev, password: "" }));
                   }}
