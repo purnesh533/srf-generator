@@ -239,7 +239,7 @@ export default function SrfForm({ loadDraft, onDraftConsumed }) {
       const fd = new FormData();
       fd.append("file", file);
       const { data } = await api.post("/srf/parse-offer-letter", fd, {
-        headers: { "Content-Type": "multipart/form-data" }
+        timeout: 120000
       });
       const fields = data.fields || {};
       const NUMERIC = new Set([
