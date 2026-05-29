@@ -19,6 +19,7 @@ export default function Users() {
   const [emailMsg, setEmailMsg] = useState("");
   const [emailErr, setEmailErr] = useState("");
   const [sending, setSending] = useState(false);
+  const canUseOutlook = window.location.hostname === "localhost";
 
   // Bulk-select state for the All Submissions table
   const [dateFrom, setDateFrom] = useState("");
@@ -261,19 +262,14 @@ export default function Users() {
       };
       if (isBulk) payload.ids = emailFor.ids;
       const { data } = await api.post(url, payload);
-      const n = data.attachedCount ?? 0;
       if (data.result === "SENT" || /SENT/.test(data.result || "")) {
         setEmailMsg(
-          `Email sent through Outlook to ${emailForm.to.trim()} with ${n} attachment(s).`
+          data.message ||
+            `Approval email sent to ${emailForm.to.trim()}.`
         );
       } else {
         setEmailMsg(
-          `Outlook opened with ${n} attachment(s) pre-attached for ${emailForm.to.trim()}. Just click Send in Outlook.`
-        );
-      }
-      if (n === 0) {
-        setEmailErr(
-          "Warning: 0 attachments were added. Check the backend console for [outlook] log lines to see why."
+          `Outlook opened for ${emailForm.to.trim()}. Click Send in Outlook to deliver the approval link.`
         );
       }
     } catch (err) {
@@ -661,7 +657,13 @@ export default function Users() {
               </p>
             )}
 
-            <form onSubmit={(e) => sendEmail(e, false)} className="formStack">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendEmail(e, !canUseOutlook);
+              }}
+              className="formStack"
+            >
               <label className="field">
                 <span>To (approver email) *</span>
                 <input
@@ -695,9 +697,11 @@ export default function Users() {
               {emailErr && <div className="error">{emailErr}</div>}
 
               <div className="downloads">
-                <button type="submit" disabled={sending} className="primaryBtn" style={{ width: "auto" }}>
-                  {sending ? "Opening Outlook..." : "Open Draft in Outlook"}
-                </button>
+                {canUseOutlook && (
+                  <button type="submit" disabled={sending} className="primaryBtn" style={{ width: "auto" }}>
+                    {sending ? "Opening Outlook..." : "Open Draft in Outlook"}
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={sending}
@@ -705,7 +709,7 @@ export default function Users() {
                   style={{ width: "auto", background: "var(--accent, #6d28d9)" }}
                   onClick={(e) => sendEmail(e, true)}
                 >
-                  {sending ? "Sending..." : "Send Now"}
+                  {sending ? "Sending..." : canUseOutlook ? "Send Now" : "Send Email"}
                 </button>
                 <button
                   type="button"

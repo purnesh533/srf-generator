@@ -357,6 +357,135 @@ async function ensureSrfFiles(record) {
   return { pdfPath, excelPath, pdfFileName, excelFileName };
 }
 
+function getAppBaseUrl() {
+  return (process.env.APP_BASE_URL || "http://localhost:5173").replace(/\/$/, "");
+}
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function sendSingleApprovalLinkViaSmtp(record, { to, cc, message }) {
+  const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
+  if (!recipient) {
+    const err = new Error("Approver email is required");
+    err.status = 400;
+    throw err;
+  }
+
+  await ensureSrfFiles(record);
+  const approvalLink = `${getAppBaseUrl()}/#/approve/${record.id}`;
+  const subject = `SRF Approval Request - ${record.candidateName || "Candidate"} (${record.employeeCode || ""})`;
+
+  const bodyLines = [
+    "Hi,",
+    "",
+    `An SRF for ${record.candidateName || "a candidate"} (Employee Code: ${record.employeeCode || "-"}) requires your approval.`,
+    "",
+    "Please click the link below to review the PDF and Excel and submit your decision:",
+    approvalLink,
+    "",
+    "You will need to log in with your admin account."
+  ];
+  if (message) bodyLines.push("", String(message));
+  bodyLines.push("", "Regards,", "RSI SRF System");
+
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;color:#1e293b;">
+      <p>Hi,</p>
+      <p>An SRF for <strong>${escapeHtml(record.candidateName || "a candidate")}</strong>
+      (Employee Code: <strong>${escapeHtml(record.employeeCode || "-")}</strong>) requires your approval.</p>
+      <p>Please click the link below to review the PDF and Excel and submit your decision:</p>
+      <p><a href="${approvalLink}">${escapeHtml(approvalLink)}</a></p>
+      <p>You will need to log in with your admin account.</p>
+      ${message ? `<p><em>${escapeHtml(message)}</em></p>` : ""}
+      <p>Regards,<br/>RSI SRF System</p>
+    </div>
+  `;
+
+  const result = await sendApprovalEmail({
+    to: recipient,
+    cc: cc || undefined,
+    subject,
+    html,
+    attachments: []
+  });
+
+  return { result, recipient, approvalLink };
+}
+
+async function sendBulkApprovalLinkViaSmtp(selected, { to, cc, message }) {
+  const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
+  if (!recipient) {
+    const err = new Error("Approver email is required");
+    err.status = 400;
+    throw err;
+  }
+
+  for (const record of selected) {
+    await ensureSrfFiles(record);
+  }
+
+  const summaryLink = `${getAppBaseUrl()}/#/approvals?ids=${selected.map((r) => r.id).join(",")}`;
+  const subject = `SRF Approval Request - ${selected.length} candidate(s)`;
+
+  const bodyLines = [
+    "Hi,",
+    "",
+    `${selected.length} Selection Recommendation Form(s) require your approval:`,
+    "",
+    ...selected.map(
+      (r, idx) =>
+        `${idx + 1}. ${r.candidateName || "-"} (E.Code ${r.employeeCode || "-"})` +
+        (r.dateOfJoining ? ` — DOJ ${r.dateOfJoining}` : "") +
+        ` — Status: ${(r.approvalStatus || "pending").toUpperCase()}`
+    ),
+    "",
+    "Please click the link below to review them and submit your decisions:",
+    summaryLink,
+    "",
+    "You will need to log in with your admin account."
+  ];
+  if (message) bodyLines.push("", String(message));
+  bodyLines.push("", "Regards,", "RSI SRF System");
+
+  const listHtml = selected
+    .map(
+      (r, idx) =>
+        `<li>${escapeHtml(r.candidateName || "-")} (E.Code ${escapeHtml(r.employeeCode || "-")})` +
+        `${r.dateOfJoining ? ` — DOJ ${escapeHtml(r.dateOfJoining)}` : ""}` +
+        ` — ${escapeHtml((r.approvalStatus || "pending").toUpperCase())}</li>`
+    )
+    .join("");
+
+  const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;color:#1e293b;">
+      <p>Hi,</p>
+      <p><strong>${selected.length}</strong> Selection Recommendation Form(s) require your approval:</p>
+      <ol>${listHtml}</ol>
+      <p>Please click the link below to review them and submit your decisions:</p>
+      <p><a href="${summaryLink}">${escapeHtml(summaryLink)}</a></p>
+      <p>You will need to log in with your admin account.</p>
+      ${message ? `<p><em>${escapeHtml(message)}</em></p>` : ""}
+      <p>Regards,<br/>RSI SRF System</p>
+    </div>
+  `;
+
+  const result = await sendApprovalEmail({
+    to: recipient,
+    cc: cc || undefined,
+    subject,
+    html,
+    attachments: []
+  });
+
+  return { result, recipient, summaryLink };
+}
+
 function buildSrfFilterTag(req) {
   const { from, to } = req.body || {};
   if (from && to) return `${from}_to_${to}`;
@@ -434,19 +563,9 @@ export async function bulkSummaryExcel(req, res) {
 
 export async function openBulkOutlookDraft(req, res) {
   try {
-    if (process.platform !== "win32") {
-      return res.status(400).json({
-        message: "Outlook automation only supported on Windows with Outlook desktop installed"
-      });
-    }
-
     const { ids, to, cc, message, send } = req.body || {};
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ message: "Select at least one SRF" });
-    }
-    const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
-    if (!recipient) {
-      return res.status(400).json({ message: "Approver email is required" });
     }
 
     const allRecords = await getAllRecords();
@@ -454,6 +573,33 @@ export async function openBulkOutlookDraft(req, res) {
     const selected = ids.map((id) => byId.get(id)).filter(Boolean);
     if (selected.length === 0) {
       return res.status(404).json({ message: "None of the selected SRFs were found" });
+    }
+
+    if (process.platform !== "win32") {
+      if (!send) {
+        return res.status(400).json({
+          message:
+            "Outlook draft is only available on Windows with Outlook desktop installed. Use Send Email to deliver via SMTP."
+        });
+      }
+
+      const { result, recipient } = await sendBulkApprovalLinkViaSmtp(selected, {
+        to,
+        cc,
+        message
+      });
+      return res.json({
+        message: `Approval email sent to ${recipient} for ${selected.length} SRF(s)`,
+        result: "SENT",
+        srfCount: selected.length,
+        usingEthereal: result.usingEthereal,
+        previewUrl: result.previewUrl
+      });
+    }
+
+    const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
+    if (!recipient) {
+      return res.status(400).json({ message: "Approver email is required" });
     }
 
     await ensureGeneratedDirs();
@@ -555,18 +701,34 @@ export async function openBulkOutlookDraft(req, res) {
 
 export async function openOutlookDraft(req, res) {
   try {
-    if (process.platform !== "win32") {
-      return res.status(400).json({
-        message: "Outlook automation only supported on Windows with Outlook desktop installed"
-      });
-    }
-
     const record = await getRecordById(req.params.id);
     if (!record) {
       return res.status(404).json({ message: "SRF record not found" });
     }
 
     const { to, cc, message, send } = req.body || {};
+
+    if (process.platform !== "win32") {
+      if (!send) {
+        return res.status(400).json({
+          message:
+            "Outlook draft is only available on Windows with Outlook desktop installed. Use Send Email to deliver via SMTP."
+        });
+      }
+
+      const { result, recipient } = await sendSingleApprovalLinkViaSmtp(record, {
+        to,
+        cc,
+        message
+      });
+      return res.json({
+        message: `Approval email sent to ${recipient}`,
+        result: "SENT",
+        usingEthereal: result.usingEthereal,
+        previewUrl: result.previewUrl
+      });
+    }
+
     const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
     if (!recipient) {
       return res.status(400).json({ message: "Approver email is required" });
@@ -590,7 +752,7 @@ export async function openOutlookDraft(req, res) {
     await ensureFile(excelPath, () => generateExcelBuffer(record));
 
     // Build the approval link. Defaults to the dev server on port 5173.
-    const appBaseUrl = (process.env.APP_BASE_URL || "http://localhost:5173").replace(/\/$/, "");
+    const appBaseUrl = getAppBaseUrl();
     const approvalLink = `${appBaseUrl}/#/approve/${record.id}`;
 
     const bodyLines = [
