@@ -369,7 +369,23 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;");
 }
 
-async function sendSingleApprovalLinkViaSmtp(record, { to, cc, message }) {
+function extractSmtpAuth(body) {
+  const user = String(body?.senderEmail || body?.smtpUser || "").trim();
+  const pass = String(body?.senderPassword || body?.smtpPass || "");
+  if (!user || !pass) {
+    const err = new Error("Your email address and password are required to send mail");
+    err.status = 400;
+    throw err;
+  }
+  return {
+    user,
+    pass,
+    host: body?.smtpHost,
+    from: body?.senderFrom || `"RSi SRF" <${user}>`
+  };
+}
+
+async function sendSingleApprovalLinkViaSmtp(record, { to, cc, message, smtpAuth }) {
   const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
   if (!recipient) {
     const err = new Error("Approver email is required");
@@ -411,13 +427,14 @@ async function sendSingleApprovalLinkViaSmtp(record, { to, cc, message }) {
     cc: cc || undefined,
     subject,
     html,
-    attachments: []
+    attachments: [],
+    smtpAuth
   });
 
   return { result, recipient, approvalLink };
 }
 
-async function sendBulkApprovalLinkViaSmtp(selected, { to, cc, message }) {
+async function sendBulkApprovalLinkViaSmtp(selected, { to, cc, message, smtpAuth }) {
   const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
   if (!recipient) {
     const err = new Error("Approver email is required");
@@ -475,7 +492,8 @@ async function sendBulkApprovalLinkViaSmtp(selected, { to, cc, message }) {
     cc: cc || undefined,
     subject,
     html,
-    attachments: []
+    attachments: [],
+    smtpAuth
   });
 
   return { result, recipient, summaryLink };
@@ -578,10 +596,12 @@ export async function openBulkOutlookDraft(req, res) {
         });
       }
 
+      const smtpAuth = extractSmtpAuth(req.body);
       const { result, recipient } = await sendBulkApprovalLinkViaSmtp(selected, {
         to,
         cc,
-        message
+        message,
+        smtpAuth
       });
       return res.json({
         message: `Approval email sent to ${recipient} for ${selected.length} SRF(s)`,
@@ -690,7 +710,11 @@ export async function openBulkOutlookDraft(req, res) {
       });
     });
   } catch (error) {
-    res.status(500).json({ message: "Outlook automation failed", error: error.message });
+    const status = error?.status || 500;
+    res.status(status).json({
+      message: error?.message || "Outlook automation failed",
+      error: error.message
+    });
   }
 }
 
@@ -711,10 +735,12 @@ export async function openOutlookDraft(req, res) {
         });
       }
 
+      const smtpAuth = extractSmtpAuth(req.body);
       const { result, recipient } = await sendSingleApprovalLinkViaSmtp(record, {
         to,
         cc,
-        message
+        message,
+        smtpAuth
       });
       return res.json({
         message: `Approval email sent to ${recipient}`,
@@ -818,7 +844,11 @@ export async function openOutlookDraft(req, res) {
       });
     });
   } catch (error) {
-    res.status(500).json({ message: "Outlook automation failed", error: error.message });
+    const status = error?.status || 500;
+    res.status(status).json({
+      message: error?.message || "Failed to send email",
+      error: error.message
+    });
   }
 }
 
