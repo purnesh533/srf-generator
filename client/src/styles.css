@@ -425,9 +425,6 @@ body {
   padding: 22px;
   border: 1px solid var(--brand-100);
 }
-.smtpModalBackdrop {
-  z-index: 60;
-}
 
 @media (max-width: 800px) {
   .grid { grid-template-columns: 1fr; }

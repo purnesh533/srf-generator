@@ -23,7 +23,6 @@ import { access, mkdir, readFile, writeFile } from "fs/promises";
 import { constants as fsConstants } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { spawn } from "child_process";
 import { createRequire } from "module";
 import { createReadStream } from "fs";
 const archiver = createRequire(import.meta.url)("archiver");
@@ -336,8 +335,6 @@ export async function emailSrfForApproval(req, res) {
     res.json({
       message: "Email sent successfully",
       messageId: result.messageId,
-      previewUrl: result.previewUrl,
-      usingEthereal: result.usingEthereal,
       to: recipient
     });
   } catch (error) {
@@ -369,23 +366,7 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;");
 }
 
-function extractSmtpAuth(body) {
-  const user = String(body?.senderEmail || body?.smtpUser || "").trim();
-  const pass = String(body?.senderPassword || body?.smtpPass || "");
-  if (!user || !pass) {
-    const err = new Error("Your email address and password are required to send mail");
-    err.status = 400;
-    throw err;
-  }
-  return {
-    user,
-    pass,
-    host: body?.smtpHost,
-    from: body?.senderFrom || `"RSi SRF" <${user}>`
-  };
-}
-
-async function sendSingleApprovalLinkViaSmtp(record, { to, cc, message, smtpAuth }) {
+async function sendSingleApprovalLinkEmail(record, { to, cc, message }) {
   const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
   if (!recipient) {
     const err = new Error("Approver email is required");
@@ -426,15 +407,13 @@ async function sendSingleApprovalLinkViaSmtp(record, { to, cc, message, smtpAuth
     to: recipient,
     cc: cc || undefined,
     subject,
-    html,
-    attachments: [],
-    smtpAuth
+    html
   });
 
   return { result, recipient, approvalLink };
 }
 
-async function sendBulkApprovalLinkViaSmtp(selected, { to, cc, message, smtpAuth }) {
+async function sendBulkApprovalLinkEmail(selected, { to, cc, message }) {
   const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
   if (!recipient) {
     const err = new Error("Approver email is required");
@@ -491,9 +470,7 @@ async function sendBulkApprovalLinkViaSmtp(selected, { to, cc, message, smtpAuth
     to: recipient,
     cc: cc || undefined,
     subject,
-    html,
-    attachments: [],
-    smtpAuth
+    html
   });
 
   return { result, recipient, summaryLink };
@@ -574,9 +551,9 @@ export async function bulkSummaryExcel(req, res) {
   }
 }
 
-export async function openBulkOutlookDraft(req, res) {
+export async function sendBulkApprovalEmail(req, res) {
   try {
-    const { ids, to, cc, message, send } = req.body || {};
+    const { ids, to, cc, message } = req.body || {};
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ message: "Select at least one SRF" });
     }
@@ -588,260 +565,51 @@ export async function openBulkOutlookDraft(req, res) {
       return res.status(404).json({ message: "None of the selected SRFs were found" });
     }
 
-    if (process.platform !== "win32") {
-      if (!send) {
-        return res.status(400).json({
-          message:
-            "Outlook draft is only available on Windows with Outlook desktop installed. Use Send Email to deliver via SMTP."
-        });
-      }
-
-      const smtpAuth = extractSmtpAuth(req.body);
-      const { result, recipient } = await sendBulkApprovalLinkViaSmtp(selected, {
-        to,
-        cc,
-        message,
-        smtpAuth
-      });
-      return res.json({
-        message: `Approval email sent to ${recipient} for ${selected.length} SRF(s)`,
-        result: "SENT",
-        srfCount: selected.length,
-        usingEthereal: result.usingEthereal,
-        previewUrl: result.previewUrl
-      });
-    }
-
-    const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
-    if (!recipient) {
-      return res.status(400).json({ message: "Approver email is required" });
-    }
-
-    await ensureGeneratedDirs();
-    const ensureFile = async (filePath, generator) => {
-      try {
-        await access(filePath, fsConstants.F_OK);
-      } catch {
-        const buf = await generator();
-        await writeFile(filePath, Buffer.from(buf));
-      }
-    };
-
-    // Files are NOT attached. Make sure each PDF/Excel exists on disk so the
-    // approver can open them later from the review page.
     for (const record of selected) {
-      const { pdfFileName, excelFileName } = getStoredFileNames(record);
-      const pdfPath = path.join(pdfDir, pdfFileName);
-      const excelPath = path.join(excelDir, excelFileName);
-      await ensureFile(pdfPath, () => generatePdfBuffer(record));
-      await ensureFile(excelPath, () => generateExcelBuffer(record));
+      await ensureSrfFiles(record);
     }
 
-    const appBaseUrl = (process.env.APP_BASE_URL || "http://localhost:5173").replace(/\/$/, "");
-    const summaryLink = `${appBaseUrl}/#/approvals?ids=${selected.map((r) => r.id).join(",")}`;
+    const { result, recipient } = await sendBulkApprovalLinkEmail(selected, {
+      to,
+      cc,
+      message
+    });
 
-    const lines = [
-      "Hi,",
-      "",
-      `${selected.length} Selection Recommendation Form(s) require your approval:`,
-      "",
-      ...selected.map(
-        (r, idx) =>
-          `${idx + 1}. ${r.candidateName || "-"} (E.Code ${r.employeeCode || "-"})` +
-          (r.dateOfJoining ? ` — DOJ ${r.dateOfJoining}` : "") +
-          ` — Status: ${(r.approvalStatus || "pending").toUpperCase()}`
-      ),
-      "",
-      "Please click the link below to review them and submit your decisions:",
-      summaryLink,
-      "",
-      "You will need to log in with your admin account."
-    ];
-    if (message) lines.push("", String(message));
-    lines.push("", "Regards,", "RSI SRF System");
-
-    const subject = `SRF Approval Request - ${selected.length} candidate(s)`;
-    const verified = []; // no attachments
-
-    const scriptPath = path.resolve(__dirname, "../../scripts/Send-OutlookDraft.ps1");
-    const tmpDir = path.resolve(__dirname, "../../generated/tmp");
-    await mkdir(tmpDir, { recursive: true });
-    const configPath = path.join(tmpDir, `outlook-bulk-${Date.now()}.json`);
-    const config = {
-      To: recipient,
-      Cc: cc || "",
-      Subject: subject,
-      Body: lines.join("\r\n"),
-      Attachments: verified,
-      SendImmediately: Boolean(send)
-    };
-    await writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
-
-    const ps = spawn(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy", "Bypass",
-        "-File", scriptPath,
-        "-ConfigPath", configPath
-      ],
-      { windowsHide: true }
-    );
-    let stdout = "";
-    let stderr = "";
-    ps.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    ps.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-
-    ps.on("close", (code) => {
-      if (code !== 0) {
-        return res.status(500).json({
-          message: "Outlook automation failed",
-          exitCode: code,
-          error: stderr.trim() || stdout.trim()
-        });
-      }
-      res.json({
-        message: send
-          ? `Approval link emailed for ${selected.length} SRF(s)`
-          : `Outlook draft opened with approval link for ${selected.length} SRF(s)`,
-        result: stdout.trim() || "OK",
-        srfCount: selected.length
-      });
+    res.json({
+      message: `Approval email sent to ${recipient} for ${selected.length} SRF(s)`,
+      result: "SENT",
+      messageId: result.messageId,
+      srfCount: selected.length
     });
   } catch (error) {
     const status = error?.status || 500;
     res.status(status).json({
-      message: error?.message || "Outlook automation failed",
+      message: error?.message || "Failed to send email",
       error: error.message
     });
   }
 }
 
-export async function openOutlookDraft(req, res) {
+export async function sendApprovalLinkEmail(req, res) {
   try {
     const record = await getRecordById(req.params.id);
     if (!record) {
       return res.status(404).json({ message: "SRF record not found" });
     }
 
-    const { to, cc, message, send } = req.body || {};
+    const { to, cc, message } = req.body || {};
+    await ensureSrfFiles(record);
 
-    if (process.platform !== "win32") {
-      if (!send) {
-        return res.status(400).json({
-          message:
-            "Outlook draft is only available on Windows with Outlook desktop installed. Use Send Email to deliver via SMTP."
-        });
-      }
+    const { result, recipient } = await sendSingleApprovalLinkEmail(record, {
+      to,
+      cc,
+      message
+    });
 
-      const smtpAuth = extractSmtpAuth(req.body);
-      const { result, recipient } = await sendSingleApprovalLinkViaSmtp(record, {
-        to,
-        cc,
-        message,
-        smtpAuth
-      });
-      return res.json({
-        message: `Approval email sent to ${recipient}`,
-        result: "SENT",
-        usingEthereal: result.usingEthereal,
-        previewUrl: result.previewUrl
-      });
-    }
-
-    const recipient = String(to || process.env.APPROVER_EMAIL || "").trim();
-    if (!recipient) {
-      return res.status(400).json({ message: "Approver email is required" });
-    }
-
-    // Make sure files exist on disk (even though we don't attach them,
-    // the approver will open them via the link on the review page).
-    await ensureGeneratedDirs();
-    const { pdfFileName, excelFileName } = getStoredFileNames(record);
-    const pdfPath = path.join(pdfDir, pdfFileName);
-    const excelPath = path.join(excelDir, excelFileName);
-    const ensureFile = async (filePath, generator) => {
-      try {
-        await access(filePath, fsConstants.F_OK);
-      } catch {
-        const buf = await generator();
-        await writeFile(filePath, Buffer.from(buf));
-      }
-    };
-    await ensureFile(pdfPath, () => generatePdfBuffer(record));
-    await ensureFile(excelPath, () => generateExcelBuffer(record));
-
-    // Build the approval link. Defaults to the dev server on port 5173.
-    const appBaseUrl = getAppBaseUrl();
-    const approvalLink = `${appBaseUrl}/#/approve/${record.id}`;
-
-    const bodyLines = [
-      "Hi,",
-      "",
-      `An SRF for ${record.candidateName || "a candidate"} (Employee Code: ${record.employeeCode || "-"}) requires your approval.`,
-      "",
-      "Please click the link below to review the PDF and Excel and submit your decision:",
-      approvalLink,
-      "",
-      "You will need to log in with your admin account.",
-    ];
-    if (message) bodyLines.push("", String(message));
-    bodyLines.push("", "Regards,", "RSI SRF System");
-    const subject = `SRF Approval Request - ${record.candidateName || "Candidate"} (${record.employeeCode || ""})`;
-
-    const scriptPath = path.resolve(__dirname, "../../scripts/Send-OutlookDraft.ps1");
-
-    // No attachments any more – the approver opens the files via the link.
-    const verified = [];
-
-    const tmpDir = path.resolve(__dirname, "../../generated/tmp");
-    await mkdir(tmpDir, { recursive: true });
-    const configPath = path.join(tmpDir, `outlook-${Date.now()}-${record.id || "x"}.json`);
-    const config = {
-      To: recipient,
-      Cc: cc || "",
-      Subject: subject,
-      Body: bodyLines.join("\r\n"),
-      Attachments: verified,
-      SendImmediately: Boolean(send)
-    };
-    await writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
-
-    const ps = spawn(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy", "Bypass",
-        "-File", scriptPath,
-        "-ConfigPath", configPath
-      ],
-      { windowsHide: true }
-    );
-    let stdout = "";
-    let stderr = "";
-    ps.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    ps.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-
-    ps.on("close", (code) => {
-      if (code !== 0) {
-        return res.status(500).json({
-          message: "Outlook automation failed",
-          exitCode: code,
-          error: stderr.trim() || stdout.trim()
-        });
-      }
-      const attachedCount = (stdout.match(/\[outlook\] attached:/g) || []).length;
-      res.json({
-        message: send
-          ? `Email sent through Outlook with ${attachedCount} attachment(s)`
-          : `Outlook draft opened with ${attachedCount} attachment(s)`,
-        result: stdout.trim() || "OK",
-        attachedCount,
-        attachments: verified,
-        log: stdout
-      });
+    res.json({
+      message: `Approval email sent to ${recipient}`,
+      result: "SENT",
+      messageId: result.messageId
     });
   } catch (error) {
     const status = error?.status || 500;

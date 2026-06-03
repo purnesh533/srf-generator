@@ -46,14 +46,13 @@ app.use("/api/srf", srfRoutes);
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
   console.log("Using local JSON file storage (prototype mode)");
-  const smtpReady =
-    process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
-  if (smtpReady) {
-    console.log(`Email mode: REAL SMTP via ${process.env.SMTP_HOST}`);
+  const resendReady =
+    process.env.RESEND_API_KEY?.trim() && process.env.RESEND_FROM?.trim();
+  if (resendReady) {
+    console.log("Email mode: Resend");
   } else {
     console.log(
-      "Email mode: ETHEREAL (test inbox - emails NOT delivered). " +
-        "Set SMTP_HOST/SMTP_USER/SMTP_PASS in server/.env to send real emails."
+      "Email mode: NOT CONFIGURED. Set RESEND_API_KEY and RESEND_FROM to send approval emails."
     );
   }
 });

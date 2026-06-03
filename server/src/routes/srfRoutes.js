@@ -14,8 +14,8 @@ import {
   listAllSrf,
   listDrafts,
   listMySrf,
-  openBulkOutlookDraft,
-  openOutlookDraft,
+  sendBulkApprovalEmail,
+  sendApprovalLinkEmail,
   parseOfferLetterUpload,
   parseOfferLetterJson,
   rejectSrf,
@@ -45,7 +45,7 @@ router.delete("/drafts/:id", deleteDraft);
 router.get("/all", requireAdmin, listAllSrf);
 router.get("/master-excel", requireAdmin, downloadMasterExcel);
 
-router.post("/bulk-email-outlook", requireSuperAdmin, openBulkOutlookDraft);
+router.post("/bulk-approval-email", requireSuperAdmin, sendBulkApprovalEmail);
 router.post("/bulk-download", requireSuperAdmin, bulkDownloadZip);
 router.post("/bulk-summary-excel", requireSuperAdmin, bulkSummaryExcel);
 
@@ -58,6 +58,6 @@ router.post("/:id/reject", requireAdmin, rejectSrf);
 router.post("/:id/resend", resendSrf);
 
 router.post("/:id/email", requireSuperAdmin, emailSrfForApproval);
-router.post("/:id/email-outlook", requireSuperAdmin, openOutlookDraft);
+router.post("/:id/approval-email", requireSuperAdmin, sendApprovalLinkEmail);
 
 export default router;

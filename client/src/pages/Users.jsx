@@ -19,13 +19,6 @@ export default function Users() {
   const [emailMsg, setEmailMsg] = useState("");
   const [emailErr, setEmailErr] = useState("");
   const [sending, setSending] = useState(false);
-  const [showSmtpPrompt, setShowSmtpPrompt] = useState(false);
-  const [smtpForm, setSmtpForm] = useState(() => ({
-    email: localStorage.getItem("srf_sender_email") || "",
-    password: ""
-  }));
-  const [smtpErr, setSmtpErr] = useState("");
-  const canUseOutlook = window.location.hostname === "localhost";
 
   // Bulk-select state for the All Submissions table
   const [dateFrom, setDateFrom] = useState("");
@@ -249,14 +242,8 @@ export default function Users() {
     }
   };
 
-  const sendEmail = async (e, sendNow = false, smtpOverride = null) => {
+  const sendEmail = async (e) => {
     e.preventDefault();
-
-    if (sendNow && !smtpOverride) {
-      openSmtpPrompt(e);
-      return;
-    }
-
     setEmailErr("");
     setEmailMsg("");
     setSending(true);
@@ -264,81 +251,33 @@ export default function Users() {
     try {
       const isBulk = emailFor?.bulk === true;
       const url = isBulk
-        ? "/srf/bulk-email-outlook"
-        : `/srf/${emailFor.id}/email-outlook`;
+        ? "/srf/bulk-approval-email"
+        : `/srf/${emailFor.id}/approval-email`;
       const payload = {
         to: emailForm.to.trim(),
         cc: emailForm.cc.trim(),
-        message: emailForm.message.trim(),
-        send: sendNow
+        message: emailForm.message.trim()
       };
       if (isBulk) payload.ids = emailFor.ids;
-      if (smtpOverride) {
-        payload.senderEmail = smtpOverride.email.trim();
-        payload.senderPassword = smtpOverride.password;
-      }
       const { data } = await api.post(url, payload, { timeout: 60000 });
-      if (data.result === "SENT" || /SENT/.test(data.result || "")) {
-        setEmailMsg(
-          data.message ||
-            `Approval email sent to ${emailForm.to.trim()}.`
-        );
-        if (smtpOverride?.email) {
-          localStorage.setItem("srf_sender_email", smtpOverride.email.trim());
-        }
-        setShowSmtpPrompt(false);
-        setSmtpForm((prev) => ({ ...prev, password: "" }));
-      } else {
-        setEmailMsg(
-          `Outlook opened for ${emailForm.to.trim()}. Click Send in Outlook to deliver the approval link.`
-        );
-      }
+      setEmailMsg(
+        data.message || `Approval email sent to ${emailForm.to.trim()}.`
+      );
     } catch (err) {
-      const message =
-        err?.code === "ECONNABORTED"
-          ? "Request timed out. The mail server may be unreachable from Render (free tier blocks SMTP). Try again or upgrade to Starter."
-          : err?.response?.data?.message ||
-            err?.response?.data?.error ||
-            err?.message ||
-            "Failed to send email";
-      if (showSmtpPrompt || smtpOverride) {
-        setSmtpErr(message);
-      } else {
-        setEmailErr(message);
-      }
+      setEmailErr(
+        err?.response?.data?.message ||
+          err?.response?.data?.error ||
+          err?.message ||
+          "Failed to send email"
+      );
     } finally {
       setSending(false);
     }
   };
 
-  const openSmtpPrompt = (e) => {
-    e.preventDefault();
-    setSending(false);
-    setEmailErr("");
-    if (!emailForm.to.trim()) {
-      setEmailErr("Approver email is required");
-      return;
-    }
-    setSmtpErr("");
-    setShowSmtpPrompt(true);
-  };
-
-  const confirmSmtpSend = async (e) => {
-    e.preventDefault();
-    setSmtpErr("");
-    if (!smtpForm.email.trim() || !smtpForm.password) {
-      setSmtpErr("Your email address and password are required");
-      return;
-    }
-    await sendEmail(e, true, smtpForm);
-  };
-
   const closeEmailModal = () => {
     setSending(false);
     setEmailFor(null);
-    setShowSmtpPrompt(false);
-    setSmtpErr("");
-    setSmtpForm((prev) => ({ ...prev, password: "" }));
   };
 
   return (
@@ -700,31 +639,21 @@ export default function Users() {
             </div>
             {emailFor?.bulk ? (
               <p className="muted small">
-                One email will be opened with a secure <strong>review link</strong> for
+                One email with a secure <strong>review link</strong> will be sent for
                 <strong> {emailFor.count}</strong> selected SRF(s). The approver logs in,
                 opens the PDF/Excel from the page, and approves or rejects each one.
                 Only approved SRFs are added to the Master Excel.
               </p>
             ) : (
               <p className="muted small">
-                An email will be sent to the approver with a secure <strong>review link</strong>
+                An email with a secure <strong>review link</strong> will be sent to the approver
                 for <strong>{emailFor.candidateName}</strong> ({emailFor.employeeCode}).
                 They will log in, view the PDF/Excel, and approve or reject from the page.
                 Only approved SRFs are added to the Master Excel.
               </p>
             )}
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (canUseOutlook) {
-                  sendEmail(e, false);
-                } else {
-                  openSmtpPrompt(e);
-                }
-              }}
-              className="formStack"
-            >
+            <form onSubmit={sendEmail} className="formStack">
               <label className="field">
                 <span>To (approver email) *</span>
                 <input
@@ -758,98 +687,16 @@ export default function Users() {
               {emailErr && <div className="error">{emailErr}</div>}
 
               <div className="downloads">
-                {canUseOutlook && (
-                  <button type="submit" disabled={sending} className="primaryBtn" style={{ width: "auto" }}>
-                    {sending ? "Opening Outlook..." : "Open Draft in Outlook"}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  disabled={sending}
-                  className="primaryBtn"
-                  style={{ width: "auto", background: "var(--accent, #6d28d9)" }}
-                  onClick={openSmtpPrompt}
-                >
-                  Send Email
-                </button>
-                <button
-                  type="button"
-                  className="linkBtn"
-                  onClick={closeEmailModal}
-                >
-                  Close
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showSmtpPrompt && (
-        <div
-          className="modalBackdrop smtpModalBackdrop"
-          onClick={() => {
-            setShowSmtpPrompt(false);
-            setSending(false);
-            setSmtpErr("");
-            setSmtpForm((prev) => ({ ...prev, password: "" }));
-          }}
-        >
-          <div className="modalCard" onClick={(e) => e.stopPropagation()}>
-            <div className="sectionTitle">
-              <span className="dot" />
-              <h3>Your Email Credentials</h3>
-            </div>
-            <p className="muted small">
-              Enter the email account to send from. Your password is used once for SMTP
-              and is not stored. Use an app password if MFA is enabled.
-            </p>
-            <p className="muted small">
-              If sending fails on Render Free, upgrade the backend to Starter ($7/mo) or
-              set <code>RESEND_API_KEY</code> in Render environment variables.
-            </p>
-            <form onSubmit={confirmSmtpSend} className="formStack">
-              <label className="field">
-                <span>Your email address *</span>
-                <input
-                  type="email"
-                  value={smtpForm.email}
-                  onChange={(e) => setSmtpForm({ ...smtpForm, email: e.target.value })}
-                  placeholder="you@rsystems.com"
-                  autoFocus
-                  required
-                />
-              </label>
-              <label className="field">
-                <span>Your email password *</span>
-                <input
-                  type="password"
-                  value={smtpForm.password}
-                  onChange={(e) => setSmtpForm({ ...smtpForm, password: e.target.value })}
-                  placeholder="Password or app password"
-                  required
-                />
-              </label>
-              <p className="muted small">
-                For Office 365 with MFA, use an app password. Gmail also requires an app password.
-              </p>
-              {smtpErr && <div className="error">{smtpErr}</div>}
-              <div className="downloads">
                 <button type="submit" disabled={sending} className="primaryBtn" style={{ width: "auto" }}>
                   {sending ? "Sending..." : "Send Email"}
                 </button>
                 <button
                   type="button"
                   className="linkBtn"
+                  onClick={closeEmailModal}
                   disabled={sending}
-                  onClick={() => {
-                    setShowSmtpPrompt(false);
-                    setSending(false);
-                    setSmtpErr("");
-                    setSmtpForm((prev) => ({ ...prev, password: "" }));
-                  }}
                 >
-                  Cancel
+                  Close
                 </button>
               </div>
             </form>
