@@ -1,51 +1,15 @@
 import { randomUUID } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const dataDir = path.resolve(__dirname, "../../data");
-const draftsFile = path.join(dataDir, "srf-drafts.json");
+import Draft from "../models/Draft.js";
+import { toApi } from "./toApi.js";
 
 const MAX_DRAFTS_PER_USER = 20;
 
-async function ensureStore() {
-  await mkdir(dataDir, { recursive: true });
-  try {
-    await readFile(draftsFile, "utf-8");
-  } catch {
-    await writeFile(draftsFile, "[]", "utf-8");
-  }
-}
-
-async function readDrafts() {
-  await ensureStore();
-  const raw = await readFile(draftsFile, "utf-8");
-  const cleaned = raw.replace(/^\uFEFF/, "").trim();
-  if (!cleaned) return [];
-  try {
-    const parsed = JSON.parse(cleaned);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function writeDrafts(drafts) {
-  await writeFile(draftsFile, JSON.stringify(drafts, null, 2), "utf-8");
-}
-
 export async function listDraftsForUser(username) {
-  const drafts = await readDrafts();
-  return drafts
-    .filter((d) => d.owner === username)
-    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  const docs = await Draft.find({ owner: username }).sort({ updatedAt: -1 });
+  return docs.map(toApi);
 }
 
 export async function saveDraftForUser(username, body) {
-  const drafts = await readDrafts();
-  const now = new Date().toISOString();
   const data = body?.data || {};
   const name =
     body?.name?.trim() ||
@@ -53,43 +17,39 @@ export async function saveDraftForUser(username, body) {
     data.employeeCode?.trim() ||
     `Untitled draft ${new Date().toLocaleString()}`;
 
-  let id = body?.id;
+  const id = body?.id;
   if (id) {
-    const idx = drafts.findIndex((d) => d.id === id && d.owner === username);
-    if (idx !== -1) {
-      drafts[idx] = { ...drafts[idx], name, data, updatedAt: now };
-      await writeDrafts(drafts);
-      return drafts[idx];
+    const existing = await Draft.findOne({ id, owner: username });
+    if (existing) {
+      existing.name = name;
+      existing.data = data;
+      await existing.save();
+      return toApi(existing);
     }
   }
 
-  const draft = {
+  const draft = await Draft.create({
     id: randomUUID(),
     owner: username,
     name,
-    data,
-    createdAt: now,
-    updatedAt: now
-  };
-  drafts.push(draft);
+    data
+  });
 
-  // Cap per user
-  const ownDrafts = drafts
-    .filter((d) => d.owner === username)
-    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
-  const keepIds = new Set(ownDrafts.slice(0, MAX_DRAFTS_PER_USER).map((d) => d.id));
-  const trimmed = drafts.filter((d) => d.owner !== username || keepIds.has(d.id));
+  const ownDrafts = await Draft.find({ owner: username })
+    .sort({ updatedAt: -1 })
+    .select("id");
+  if (ownDrafts.length > MAX_DRAFTS_PER_USER) {
+    const removeIds = ownDrafts.slice(MAX_DRAFTS_PER_USER).map((d) => d.id);
+    await Draft.deleteMany({ owner: username, id: { $in: removeIds } });
+  }
 
-  await writeDrafts(trimmed);
-  return draft;
+  return toApi(draft);
 }
 
 export async function deleteDraftForUser(username, id) {
-  const drafts = await readDrafts();
-  const next = drafts.filter((d) => !(d.id === id && d.owner === username));
-  if (next.length === drafts.length) {
+  const result = await Draft.deleteOne({ id, owner: username });
+  if (result.deletedCount === 0) {
     throw new Error("Draft not found");
   }
-  await writeDrafts(next);
   return { ok: true };
 }

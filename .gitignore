@@ -10,9 +10,8 @@ node_modules/
 dist/
 build/
 
-# Generated / runtime data
+# Generated / runtime output
 server/generated/
-server/data/
 
 # Logs & debug
 *.log

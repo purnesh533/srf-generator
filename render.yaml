@@ -22,7 +22,5 @@ services:
         sync: false
       - key: RESEND_FROM
         sync: false
-    disk:
-      name: srf-data
-      mountPath: /app/data
-      sizeGB: 1
+      - key: MONGODB_URI
+        sync: false

@@ -65,6 +65,6 @@ const srfSchema = new mongoose.Schema(
   }
 );
 
-const Srf = mongoose.model("Srf", srfSchema);
+const Srf = mongoose.model("Srf", srfSchema, "srfs");
 
 export default Srf;
