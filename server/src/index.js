@@ -3,6 +3,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import srfRoutes from "./routes/srfRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import { connectDb } from "./config/db.js";
+import { ensureSeedUsers } from "./config/users.js";
 
 dotenv.config();
 
@@ -43,16 +45,26 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/srf", srfRoutes);
 
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-  console.log("Using local JSON file storage (prototype mode)");
-  const resendReady =
-    process.env.RESEND_API_KEY?.trim() && process.env.RESEND_FROM?.trim();
-  if (resendReady) {
-    console.log("Email mode: Resend");
-  } else {
-    console.log(
-      "Email mode: NOT CONFIGURED. Set RESEND_API_KEY and RESEND_FROM to send approval emails."
-    );
-  }
+async function start() {
+  await connectDb();
+  await ensureSeedUsers();
+
+  app.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+    console.log("Storage: MongoDB Atlas");
+    const resendReady =
+      process.env.RESEND_API_KEY?.trim() && process.env.RESEND_FROM?.trim();
+    if (resendReady) {
+      console.log("Email mode: Resend");
+    } else {
+      console.log(
+        "Email mode: NOT CONFIGURED. Set RESEND_API_KEY and RESEND_FROM to send approval emails."
+      );
+    }
+  });
+}
+
+start().catch((err) => {
+  console.error("Failed to start server:", err.message);
+  process.exit(1);
 });

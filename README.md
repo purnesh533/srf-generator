@@ -27,7 +27,14 @@ npm run dev
 
 Frontend runs on `http://localhost:5173` and backend on `http://localhost:5000`.
 
-Data is stored locally in `server/data/srf-records.json` (prototype mode, no MongoDB).
+Data is stored in **MongoDB Atlas**. Set `MONGODB_URI` in `server/.env` (see `.env.example`).
+
+To import existing JSON data from `server/data/` (if any):
+
+```bash
+cd server
+npm run migrate
+```
 
 Generated files are stored in:
 - `server/generated/pdf` for individual PDFs

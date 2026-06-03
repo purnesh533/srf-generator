@@ -10,7 +10,7 @@ import {
   getRecordByEmployeeCode,
   getRecordById,
   updateRecord
-} from "../utils/localStore.js";
+} from "../utils/dbStore.js";
 import { computeAnnualCtc } from "../utils/salary.js";
 import { sendApprovalEmail } from "../utils/mailer.js";
 import { extractText, parseOfferLetter } from "../utils/offerLetterParser.js";
@@ -18,7 +18,7 @@ import {
   deleteDraftForUser,
   listDraftsForUser,
   saveDraftForUser
-} from "../utils/draftsStore.js";
+} from "../utils/draftsDbStore.js";
 import { access, mkdir, readFile, writeFile } from "fs/promises";
 import { constants as fsConstants } from "fs";
 import path from "path";
